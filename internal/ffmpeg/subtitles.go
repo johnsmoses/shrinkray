@@ -26,6 +26,51 @@ func IsMKVCompatible(codecName string) bool {
 	return mkvCompatibleCodecs[strings.ToLower(strings.TrimSpace(codecName))]
 }
 
+// mp4TranscodableCodecs lists text-based subtitle codecs that can be transcoded to
+// mov_text for MP4. Image-based formats (PGS, VobSub, DVB) are excluded because
+// their graphical content cannot be losslessly represented as timed text.
+var mp4TranscodableCodecs = map[string]bool{
+	"subrip": true, // SRT - most common text format
+	"srt":    true, // Alias for subrip
+	"ass":    true, // Advanced SubStation Alpha
+	"ssa":    true, // SubStation Alpha
+	"text":   true, // Plain text
+	"webvtt": true, // WebVTT
+}
+
+// IsMP4Transcodable returns true if the subtitle codec can be transcoded to mov_text for MP4.
+func IsMP4Transcodable(codecName string) bool {
+	return mp4TranscodableCodecs[strings.ToLower(strings.TrimSpace(codecName))]
+}
+
+// FilterMP4Transcodable partitions subtitle streams into transcodable (text-based) and
+// non-transcodable (image-based). Returns indices of streams that can be transcoded to
+// mov_text, and codec names of dropped image-based streams.
+//
+// IMPORTANT: Return value semantics match FilterMKVCompatible:
+//   - nil input → nil output (no subtitle streams, use default mapping)
+//   - non-nil input → non-nil output (possibly empty if all image-based)
+func FilterMP4Transcodable(streams []SubtitleStream) (transcodableIndices []int, droppedCodecs []string) {
+	if streams == nil {
+		return nil, nil
+	}
+
+	transcodableIndices = make([]int, 0, len(streams))
+	seenCodecs := make(map[string]bool)
+
+	for _, s := range streams {
+		if IsMP4Transcodable(s.CodecName) {
+			transcodableIndices = append(transcodableIndices, s.Index)
+			continue
+		}
+		if !seenCodecs[s.CodecName] {
+			seenCodecs[s.CodecName] = true
+			droppedCodecs = append(droppedCodecs, s.CodecName)
+		}
+	}
+	return transcodableIndices, droppedCodecs
+}
+
 // FilterMKVCompatible partitions subtitle streams into compatible and incompatible.
 // Returns indices of compatible streams (for -map 0:N arguments) and unique codec names
 // of dropped streams (for logging warnings to the user, de-duplicated to avoid log spam).

@@ -127,7 +127,7 @@ func (q *Queue) persistDelete(id string) {
 
 // newJob constructs a Job from the given parameters and probe result.
 // Both Add and AddMultiple use this to avoid duplicating the 20+ field assignments.
-func newJob(inputPath string, probe *ffmpeg.ProbeResult, presetID string, encoder string, isHardware bool, skipReason string, smartShrinkQuality string) *Job {
+func newJob(inputPath string, probe *ffmpeg.ProbeResult, presetID string, encoder string, isHardware bool, skipReason string, smartShrinkQuality string, outputFormat string) *Job {
 	status := StatusPending
 	if skipReason != "" {
 		status = StatusSkipped
@@ -143,6 +143,7 @@ func newJob(inputPath string, probe *ffmpeg.ProbeResult, presetID string, encode
 		Error:              skipReason,
 		SkipReason:         skipReason,
 		SmartShrinkQuality: smartShrinkQuality,
+		OutputFormat:       outputFormat,
 		InputSize:          probe.Size,
 		Duration:           probe.Duration.Milliseconds(),
 		Bitrate:            probe.Bitrate,
@@ -159,7 +160,7 @@ func newJob(inputPath string, probe *ffmpeg.ProbeResult, presetID string, encode
 }
 
 // Add adds a new job to the queue
-func (q *Queue) Add(inputPath string, presetID string, probe *ffmpeg.ProbeResult, smartShrinkQuality string) (*Job, error) {
+func (q *Queue) Add(inputPath string, presetID string, probe *ffmpeg.ProbeResult, smartShrinkQuality string, outputFormat string) (*Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -178,7 +179,7 @@ func (q *Queue) Add(inputPath string, presetID string, probe *ffmpeg.ProbeResult
 		skipReason = checkSkipReason(probe, meta, q.allowSameCodec)
 	}
 
-	job := newJob(inputPath, probe, presetID, encoder, isHardware, skipReason, smartShrinkQuality)
+	job := newJob(inputPath, probe, presetID, encoder, isHardware, skipReason, smartShrinkQuality, outputFormat)
 
 	q.jobs[job.ID] = job
 	q.order = append(q.order, job.ID)
@@ -198,7 +199,7 @@ func (q *Queue) Add(inputPath string, presetID string, probe *ffmpeg.ProbeResult
 }
 
 // AddMultiple adds multiple jobs at once with batched persistence and SSE
-func (q *Queue) AddMultiple(probes []*ffmpeg.ProbeResult, presetID string, smartShrinkQuality string) ([]*Job, error) {
+func (q *Queue) AddMultiple(probes []*ffmpeg.ProbeResult, presetID string, smartShrinkQuality string, outputFormat string) ([]*Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -231,7 +232,7 @@ func (q *Queue) AddMultiple(probes []*ffmpeg.ProbeResult, presetID string, smart
 			addedCount++
 		}
 
-		job := newJob(probe.Path, probe, presetID, encoder, isHardware, skipReason, smartShrinkQuality)
+		job := newJob(probe.Path, probe, presetID, encoder, isHardware, skipReason, smartShrinkQuality, outputFormat)
 
 		q.jobs[job.ID] = job
 		q.order = append(q.order, job.ID)

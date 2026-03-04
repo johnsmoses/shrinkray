@@ -601,7 +601,7 @@ func (w *Worker) prepareJob(job *Job) (*ffmpeg.Preset, string, error) {
 	}
 
 	tempDir := w.cfg.GetTempDir()
-	tempPath := ffmpeg.BuildTempPath(job.InputPath, tempDir, w.cfg.OutputFormat)
+	tempPath := ffmpeg.BuildTempPath(job.InputPath, tempDir, w.resolveOutputFormat(job))
 
 	// Mark job as started (first worker to call this wins)
 	if err := w.queue.StartJob(job.ID, tempPath); err != nil {
@@ -619,15 +619,17 @@ func (w *Worker) prepareJob(job *Job) (*ffmpeg.Preset, string, error) {
 func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg.Preset) (ffmpeg.TranscodeOptions, error) {
 	var zero ffmpeg.TranscodeOptions
 
+	outputFormat := w.resolveOutputFormat(job)
+
 	// Skip if file is already in the target container format.
 	// e.g., remuxing video.mkv to mkv is a no-op.
 	srcExt := strings.ToLower(filepath.Ext(job.InputPath))
-	targetExt := "." + w.cfg.OutputFormat
+	targetExt := "." + outputFormat
 	if srcExt == targetExt {
-		reason := fmt.Sprintf("File is already in %s container", strings.ToUpper(w.cfg.OutputFormat))
+		reason := fmt.Sprintf("File is already in %s container", strings.ToUpper(outputFormat))
 		logger.Info("Job skipped - already in target format",
 			"job_id", job.ID,
-			"format", w.cfg.OutputFormat)
+			"format", outputFormat)
 		if err := w.queue.SkipJob(job.ID, reason); err != nil {
 			logger.Warn("Failed to update job state", "job_id", job.ID, "op", "SkipJob", "error", err)
 		}
@@ -637,9 +639,11 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 	duration := time.Duration(job.Duration) * time.Millisecond
 	totalFrames := int64(float64(job.Duration) / 1000.0 * job.FrameRate)
 
-	// For MKV output, filter incompatible subtitle codecs to avoid muxing failures.
 	var subtitleIndices []int
-	if w.cfg.OutputFormat == "mkv" {
+	var subtitleTranscodeIndices []int
+
+	if outputFormat == "mkv" {
+		// For MKV output, filter incompatible subtitle codecs to avoid muxing failures.
 		probeCtx, probeCancel := context.WithTimeout(jobCtx, 10*time.Second)
 		subtitleStreams, err := w.prober.ProbeSubtitles(probeCtx, job.InputPath)
 		probeCancel()
@@ -657,14 +661,33 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 			}
 			subtitleIndices = compatible
 		}
+	} else if outputFormat == "mp4" {
+		// For MP4 output, transcode text-based subtitles to mov_text; drop image-based ones.
+		probeCtx, probeCancel := context.WithTimeout(jobCtx, 10*time.Second)
+		subtitleStreams, err := w.prober.ProbeSubtitles(probeCtx, job.InputPath)
+		probeCancel()
+
+		if err != nil {
+			logger.Warn("Failed to probe subtitles, using default mapping",
+				"job_id", job.ID, "error", err)
+		} else if len(subtitleStreams) > 0 {
+			transcodable, dropped := ffmpeg.FilterMP4Transcodable(subtitleStreams)
+			if len(dropped) > 0 {
+				logger.Warn("Dropping image-based subtitle streams (not supported in MP4)",
+					"job_id", job.ID,
+					"dropped", dropped)
+			}
+			subtitleTranscodeIndices = transcodable
+		}
 	}
 
 	return ffmpeg.TranscodeOptions{
-		Preset:          preset,
-		Duration:        duration,
-		TotalFrames:     totalFrames,
-		OutputFormat:    w.cfg.OutputFormat,
-		SubtitleIndices: subtitleIndices,
+		Preset:                   preset,
+		Duration:                 duration,
+		TotalFrames:              totalFrames,
+		OutputFormat:             outputFormat,
+		SubtitleIndices:          subtitleIndices,
+		SubtitleTranscodeIndices: subtitleTranscodeIndices,
 	}, nil
 }
 
@@ -780,9 +803,11 @@ func (w *Worker) buildTranscodeOpts(jobCtx context.Context, job *Job, preset *ff
 		)
 	}
 
+	outputFormat := w.resolveOutputFormat(job)
+
 	// For MKV output, filter incompatible subtitle codecs to avoid muxing failures.
 	var subtitleIndices []int // nil = map all (default)
-	if w.cfg.OutputFormat == "mkv" {
+	if outputFormat == "mkv" {
 		probeCtx, probeCancel := context.WithTimeout(jobCtx, 10*time.Second)
 		subtitleStreams, err := w.prober.ProbeSubtitles(probeCtx, job.InputPath)
 		probeCancel()
@@ -813,7 +838,7 @@ func (w *Worker) buildTranscodeOpts(jobCtx context.Context, job *Job, preset *ff
 		QualityAV1:      qualityAV1,
 		QualityMod:      qualityMod,
 		SoftwareDecode:  useSoftwareDecode,
-		OutputFormat:    w.cfg.OutputFormat,
+		OutputFormat:    outputFormat,
 		Tonemap:         tonemapParams,
 		SubtitleIndices: subtitleIndices,
 	}, nil
@@ -928,7 +953,7 @@ func (w *Worker) finalizeJob(
 
 	// Finalize the transcode (handle original file)
 	replace := w.cfg.OriginalHandling == "replace"
-	finalPath, err := ffmpeg.FinalizeTranscode(job.InputPath, tempPath, w.cfg.OutputFormat, replace)
+	finalPath, err := ffmpeg.FinalizeTranscode(job.InputPath, tempPath, w.resolveOutputFormat(job), replace)
 	if err != nil {
 		// Try to clean up
 		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
@@ -994,6 +1019,15 @@ func (w *Worker) CancelAndStop() {
 
 	// Then stop the worker
 	w.Stop()
+}
+
+// resolveOutputFormat returns the effective output format for a job.
+// If the job has a per-job format override, it takes precedence over the global config.
+func (w *Worker) resolveOutputFormat(job *Job) string {
+	if job.OutputFormat != "" {
+		return job.OutputFormat
+	}
+	return w.cfg.OutputFormat
 }
 
 // shouldRetryWithSoftwareDecode returns true if we should retry with software decode.

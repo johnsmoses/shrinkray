@@ -64,7 +64,7 @@ func TestWorkerPoolIntegration(t *testing.T) {
 	}
 
 	// Add job
-	job, err := queue.Add(testCopy, "compress-hevc", probe, "")
+	job, err := queue.Add(testCopy, "compress-hevc", probe, "", "")
 	if err != nil {
 		t.Fatalf("failed to add job: %v", err)
 	}

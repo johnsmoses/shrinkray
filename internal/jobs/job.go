@@ -60,6 +60,7 @@ type Job struct {
 	QualityMod  float64 `json:"quality_mod,omitempty"`   // Bitrate modifier for VideoToolbox (0.0-1.0)
 	SkipReason         string `json:"skip_reason,omitempty"`          // Reason for skip status
 	SmartShrinkQuality string `json:"smartshrink_quality,omitempty"` // Quality tier: acceptable, good, excellent
+	OutputFormat       string `json:"output_format,omitempty"`       // Per-job format override: "mkv", "mp4", or "" (use config default)
 	CreatedAt          time.Time `json:"created_at"`
 	StartedAt   time.Time `json:"started_at,omitempty"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`

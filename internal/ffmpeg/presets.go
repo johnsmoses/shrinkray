@@ -438,9 +438,13 @@ type TonemapParams struct {
 }
 
 // BuildRemuxArgs builds FFmpeg arguments for a remux (container change) operation.
-// Copies all streams without re-encoding: video, audio, and subtitles.
+// Copies all streams without re-encoding. Subtitle handling differs by container:
+//   - MKV: copy compatible subtitle streams (subtitleCopyIndices)
+//   - MP4: transcode text-based subtitles to mov_text (subtitleTranscodeIndices),
+//     drop image-based subtitles (PGS, VobSub) that cannot be represented as timed text
+//
 // Returns (inputArgs, outputArgs): inputArgs go before -i, outputArgs go after.
-func BuildRemuxArgs(outputFormat string, subtitleIndices []int) (inputArgs []string, outputArgs []string) {
+func BuildRemuxArgs(outputFormat string, subtitleCopyIndices []int, subtitleTranscodeIndices []int) (inputArgs []string, outputArgs []string) {
 	// No hardware acceleration for remux (all streams are copied)
 	inputArgs = nil
 
@@ -451,23 +455,29 @@ func BuildRemuxArgs(outputFormat string, subtitleIndices []int) (inputArgs []str
 	}
 
 	if outputFormat == "mp4" {
-		// MP4: skip subtitles (most subtitle codecs are incompatible with MP4 container)
-		// and add faststart for web/streaming compatibility.
-		outputArgs = append(outputArgs,
-			"-sn",
-			"-movflags", "+faststart",
-		)
+		// MP4: transcode text-based subtitles to mov_text; drop image-based ones.
+		// mov_text is the only subtitle format natively supported by the MP4 container.
+		if len(subtitleTranscodeIndices) > 0 {
+			for _, idx := range subtitleTranscodeIndices {
+				outputArgs = append(outputArgs, "-map", fmt.Sprintf("0:%d?", idx))
+			}
+			outputArgs = append(outputArgs, "-c:s", "mov_text")
+		} else {
+			// No transcodable subtitles (all image-based or none present)
+			outputArgs = append(outputArgs, "-sn")
+		}
+		outputArgs = append(outputArgs, "-movflags", "+faststart")
 	} else {
-		// MKV: include subtitles based on SubtitleIndices compatibility check.
+		// MKV: copy subtitles based on compatibility check.
 		switch {
-		case subtitleIndices == nil:
-			// nil = map all subtitle streams (default behavior)
+		case subtitleCopyIndices == nil:
+			// nil = map all subtitle streams (default when probe unavailable)
 			outputArgs = append(outputArgs, "-map", "0:s?")
-		case len(subtitleIndices) == 0:
-			// empty = no compatible subtitles found, don't add any
+		case len(subtitleCopyIndices) == 0:
+			// empty = no compatible subtitles, don't add any
 		default:
 			// specific indices = map only compatible streams
-			for _, idx := range subtitleIndices {
+			for _, idx := range subtitleCopyIndices {
 				outputArgs = append(outputArgs, "-map", fmt.Sprintf("0:%d?", idx))
 			}
 		}

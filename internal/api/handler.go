@@ -183,6 +183,7 @@ type CreateJobsRequest struct {
 	Paths              []string `json:"paths"`
 	PresetID           string   `json:"preset_id"`
 	SmartShrinkQuality string   `json:"smartshrink_quality,omitempty"`
+	OutputFormat       string   `json:"output_format,omitempty"` // "" = use config default, "mkv" or "mp4" for override
 }
 
 // CreateJobs handles POST /api/jobs
@@ -209,6 +210,13 @@ func (h *Handler) CreateJobs(w http.ResponseWriter, r *http.Request) {
 	smartShrinkQuality := req.SmartShrinkQuality
 	if smartShrinkQuality != "" && !jobs.IsValidSmartShrinkQuality(smartShrinkQuality) {
 		writeError(w, http.StatusBadRequest, "smartshrink_quality must be 'acceptable', 'good', or 'excellent'")
+		return
+	}
+
+	// Validate output format override if provided
+	outputFormat := req.OutputFormat
+	if outputFormat != "" && outputFormat != "mkv" && outputFormat != "mp4" {
+		writeError(w, http.StatusBadRequest, "output_format must be 'mkv', 'mp4', or '' (config default)")
 		return
 	}
 
@@ -252,7 +260,7 @@ func (h *Handler) CreateJobs(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Add jobs to queue - SSE will notify frontend of new jobs
-		_, _ = h.queue.AddMultiple(probes, req.PresetID, smartShrinkQuality)
+		_, _ = h.queue.AddMultiple(probes, req.PresetID, smartShrinkQuality, outputFormat)
 	}()
 }
 
@@ -641,8 +649,8 @@ func (h *Handler) RetryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add new job with same preset and quality tier
-	newJob, err := h.queue.Add(job.InputPath, job.PresetID, probe, job.SmartShrinkQuality)
+	// Add new job with same preset, quality tier, and format override
+	newJob, err := h.queue.Add(job.InputPath, job.PresetID, probe, job.SmartShrinkQuality, job.OutputFormat)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create job: %v", err))
 		return

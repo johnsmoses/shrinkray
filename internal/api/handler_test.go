@@ -436,7 +436,7 @@ func TestDeleteTerminalJobRemovesIt(t *testing.T) {
 	}
 
 	// Add a job and complete it
-	job, _ := handler.queue.Add(probe.Path, "compress-hevc", probe, "")
+	job, _ := handler.queue.Add(probe.Path, "compress-hevc", probe, "", "")
 	handler.queue.StartJob(job.ID, "/tmp/temp.mkv")
 	handler.queue.CompleteJob(job.ID, "/media/video.mkv", 500000)
 
@@ -494,7 +494,7 @@ func TestDeleteTerminalJobAllStates(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			job, _ := handler.queue.Add(probe.Path, "compress-hevc", probe, "")
+			job, _ := handler.queue.Add(probe.Path, "compress-hevc", probe, "", "")
 			tc.setup(job.ID)
 
 			req := httptest.NewRequest("DELETE", "/api/jobs/"+job.ID, nil)

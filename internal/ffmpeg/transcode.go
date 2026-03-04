@@ -68,10 +68,11 @@ type TranscodeOptions struct {
 	QualityHEVC     int
 	QualityAV1      int
 	QualityMod      float64
-	SoftwareDecode  bool
-	OutputFormat    string
-	Tonemap         *TonemapParams
-	SubtitleIndices []int
+	SoftwareDecode           bool
+	OutputFormat             string
+	Tonemap                  *TonemapParams
+	SubtitleIndices          []int // MKV: subtitle streams to copy; remux to MP4: unused
+	SubtitleTranscodeIndices []int // MP4 remux: text-based subtitle streams to transcode to mov_text
 }
 
 // Transcoder wraps ffmpeg transcoding functionality
@@ -117,7 +118,7 @@ func (t *Transcoder) Transcode(
 	// inputArgs go before -i (hwaccel), outputArgs go after
 	var inputArgs, outputArgs []string
 	if opts.Preset.IsRemux {
-		inputArgs, outputArgs = BuildRemuxArgs(opts.OutputFormat, opts.SubtitleIndices)
+		inputArgs, outputArgs = BuildRemuxArgs(opts.OutputFormat, opts.SubtitleIndices, opts.SubtitleTranscodeIndices)
 	} else {
 		inputArgs, outputArgs = BuildPresetArgs(opts)
 	}

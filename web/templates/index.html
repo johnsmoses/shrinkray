@@ -2064,6 +2064,19 @@
                                 <div class="preset-dropdown-item" data-quality="excellent" onclick="selectQuality('excellent')">Excellent</div>
                             </div>
                         </div>
+                        <div class="preset-dropdown" id="format-dropdown">
+                            <button class="preset-dropdown-trigger" onclick="toggleFormatDropdown(event)">
+                                <span class="preset-dropdown-label">Auto</span>
+                                <svg class="preset-dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                            <div class="preset-dropdown-menu" id="format-dropdown-menu">
+                                <div class="preset-dropdown-item selected" data-format="" onclick="selectFormat('')">Auto (config default)</div>
+                                <div class="preset-dropdown-item" data-format="mkv" onclick="selectFormat('mkv')">MKV</div>
+                                <div class="preset-dropdown-item" data-format="mp4" onclick="selectFormat('mp4')">MP4</div>
+                            </div>
+                        </div>
                         <button class="btn btn-primary" onclick="startJobs()" id="start-btn" disabled>Start Transcode</button>
                         <span class="selection-count" id="selection-summary"></span>
                         <span class="schedule-status" id="schedule-status"></span>
@@ -2426,6 +2439,7 @@
         let allPresets = [];
         let selectedPresetId = null;
         let selectedQuality = 'good';
+        let selectedFormat = ''; // '' = use config default, 'mkv' or 'mp4' for override
 
         function formatBytes(bytes) {
             if (bytes === 0) return '0 B';
@@ -2957,7 +2971,8 @@
                     body: JSON.stringify({
                         paths: Array.from(selectedPaths),
                         preset_id: preset,
-                        smartshrink_quality: smartshrinkQuality
+                        smartshrink_quality: smartshrinkQuality,
+                        output_format: selectedFormat
                     })
                 });
                 const data = await resp.json();
@@ -4237,6 +4252,12 @@
                 if (savedQuality && ['acceptable', 'good', 'excellent'].includes(savedQuality)) {
                     selectQuality(savedQuality);
                 }
+
+                // Restore saved format
+                const savedFormat = localStorage.getItem('shrinkray_format');
+                if (savedFormat !== null && ['', 'mkv', 'mp4'].includes(savedFormat)) {
+                    selectFormat(savedFormat);
+                }
             } catch (err) {
                 console.error('Load presets error:', err);
             }
@@ -4247,7 +4268,8 @@
             const groups = {
                 smartshrink: [],
                 compress: [],
-                downscale: []
+                downscale: [],
+                remux: []
             };
 
             for (const preset of presets) {
@@ -4255,6 +4277,8 @@
                     groups.smartshrink.push(preset);
                 } else if (preset.id === '1080p' || preset.id === '720p') {
                     groups.downscale.push(preset);
+                } else if (preset.is_remux) {
+                    groups.remux.push(preset);
                 } else {
                     groups.compress.push(preset);
                 }
@@ -4285,6 +4309,8 @@
                 return 'SmartShrink';
             } else if (preset.id === '1080p' || preset.id === '720p') {
                 return 'Downscale';
+            } else if (preset.is_remux) {
+                return 'Remux';
             } else {
                 return 'Compress';
             }
@@ -4312,12 +4338,22 @@
                 sectionsHtml += buildPresetSection('DOWNSCALE', groups.downscale);
             }
 
+            // Remux section
+            if (groups.remux.length > 0) {
+                sectionsHtml += buildPresetSection('REMUX', groups.remux);
+            }
+
             menu.innerHTML = sectionsHtml;
         }
 
         function buildPresetSection(label, presets) {
             const items = presets.map(p => {
                 const displayName = getPresetDisplayName(p);
+                if (p.is_remux) {
+                    return `<div class="preset-dropdown-item" data-preset="${p.id}" onclick="selectPreset('${p.id}')">
+                        <span>${displayName}</span>
+                    </div>`;
+                }
                 const isHW = isHardwarePreset(p);
                 const badgeClass = isHW ? 'hardware' : 'software';
                 const badgeText = isHW ? 'HW' : 'SW';
@@ -4343,6 +4379,7 @@
 
             // Close other dropdowns
             closeQualityDropdown();
+            closeFormatDropdown();
 
             if (!isOpen) {
                 // Position the dropdown - check if we need to open upward
@@ -4403,8 +4440,12 @@
             const category = getPresetCategory(preset);
             const isHW = isHardwarePreset(preset);
 
-            // Update label with category, name, and badge
-            label.innerHTML = `<span>${category} - ${displayName}</span> <span class="job-badge ${isHW ? 'hardware' : 'software'}">${isHW ? 'HW' : 'SW'}</span>`;
+            // Update label with category, name, and badge (no badge for remux)
+            if (preset.is_remux) {
+                label.innerHTML = `<span>${category} - ${displayName}</span>`;
+            } else {
+                label.innerHTML = `<span>${category} - ${displayName}</span> <span class="job-badge ${isHW ? 'hardware' : 'software'}">${isHW ? 'HW' : 'SW'}</span>`;
+            }
 
             // Update selected state in menu
             document.querySelectorAll('#preset-dropdown-menu .preset-dropdown-item').forEach(item => {
@@ -4433,6 +4474,7 @@
 
             // Close other dropdowns
             closePresetDropdown();
+            closeFormatDropdown();
 
             if (!isOpen) {
                 // Position the dropdown - check if we need to open upward
@@ -4496,6 +4538,77 @@
             closeQualityDropdown();
         }
 
+        // Toggle format dropdown
+        function toggleFormatDropdown(event) {
+            event.stopPropagation();
+            const trigger = event.currentTarget;
+            const dropdown = document.getElementById('format-dropdown');
+            const menu = document.getElementById('format-dropdown-menu');
+            const isOpen = dropdown.classList.contains('open');
+
+            // Close other dropdowns
+            closePresetDropdown();
+            closeQualityDropdown();
+
+            if (!isOpen) {
+                const rect = trigger.getBoundingClientRect();
+                menu.style.left = rect.left + 'px';
+                menu.style.width = rect.width + 'px';
+
+                const menuHeight = menu.scrollHeight || 150;
+                const spaceBelow = window.innerHeight - rect.bottom - 16;
+                const spaceAbove = rect.top - 16;
+                const openUpward = spaceBelow < menuHeight && spaceAbove > spaceBelow;
+
+                dropdown.classList.toggle('open-upward', openUpward);
+
+                const availableSpace = openUpward ? spaceAbove : spaceBelow;
+                if (menuHeight > availableSpace) {
+                    menu.style.maxHeight = availableSpace + 'px';
+                    menu.style.overflowY = 'auto';
+                } else {
+                    menu.style.maxHeight = '';
+                    menu.style.overflowY = '';
+                }
+
+                if (openUpward) {
+                    menu.style.top = 'auto';
+                    menu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+                } else {
+                    menu.style.top = (rect.bottom + 6) + 'px';
+                    menu.style.bottom = 'auto';
+                }
+            }
+
+            dropdown.classList.toggle('open');
+        }
+
+        // Close format dropdown
+        function closeFormatDropdown() {
+            const dropdown = document.getElementById('format-dropdown');
+            dropdown.classList.remove('open');
+            dropdown.classList.remove('open-upward');
+        }
+
+        // Select format
+        function selectFormat(format) {
+            selectedFormat = format;
+            localStorage.setItem('shrinkray_format', format);
+
+            // Update trigger display
+            const label = document.querySelector('#format-dropdown .preset-dropdown-label');
+            const displayNames = { '': 'Auto', 'mkv': 'MKV', 'mp4': 'MP4' };
+            label.textContent = displayNames[format] !== undefined ? displayNames[format] : 'Auto';
+
+            // Update selected state in menu
+            document.querySelectorAll('#format-dropdown-menu .preset-dropdown-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.format === format);
+            });
+
+            // Close dropdown
+            closeFormatDropdown();
+        }
+
         // Close dropdowns on outside click
         document.addEventListener('click', (e) => {
             if (!e.target.closest('#preset-dropdown')) {
@@ -4503,6 +4616,9 @@
             }
             if (!e.target.closest('#quality-dropdown')) {
                 closeQualityDropdown();
+            }
+            if (!e.target.closest('#format-dropdown')) {
+                closeFormatDropdown();
             }
         });
 

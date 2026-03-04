@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 const schema = `
 CREATE TABLE IF NOT EXISTS jobs (
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 	quality_mod REAL DEFAULT 0,
 	skip_reason TEXT DEFAULT '',
 	smartshrink_quality TEXT DEFAULT '',
+	output_format TEXT DEFAULT '',
 	created_at TEXT NOT NULL,
 	started_at TEXT,
 	completed_at TEXT
@@ -127,6 +128,7 @@ type jobRow struct {
 	QualityMod         sql.NullFloat64 `db:"quality_mod"`
 	SkipReason         sql.NullString  `db:"skip_reason"`
 	SmartShrinkQuality sql.NullString  `db:"smartshrink_quality"`
+	OutputFormat       sql.NullString  `db:"output_format"`
 	CreatedAt          string          `db:"created_at"`
 	StartedAt          sql.NullString  `db:"started_at"`
 	CompletedAt        sql.NullString  `db:"completed_at"`
@@ -168,6 +170,7 @@ func toRow(j *jobs.Job) jobRow {
 		QualityMod:         toNullFloat64(j.QualityMod),
 		SkipReason:         toNullString(j.SkipReason),
 		SmartShrinkQuality: toNullString(j.SmartShrinkQuality),
+		OutputFormat:       toNullString(j.OutputFormat),
 		CreatedAt:          formatTime(j.CreatedAt),
 		StartedAt:          toNullTime(j.StartedAt),
 		CompletedAt:        toNullTime(j.CompletedAt),
@@ -210,6 +213,7 @@ func (r *jobRow) toJob() *jobs.Job {
 		QualityMod:         r.QualityMod.Float64,
 		SkipReason:         r.SkipReason.String,
 		SmartShrinkQuality: r.SmartShrinkQuality.String,
+		OutputFormat:       r.OutputFormat.String,
 		CreatedAt:          parseTime(r.CreatedAt),
 		StartedAt:          parseNullTime(r.StartedAt),
 		CompletedAt:        parseNullTime(r.CompletedAt),
@@ -227,13 +231,13 @@ const insertJobSQL = `INSERT INTO jobs (
 	status, progress, speed, eta, error, input_size, output_size, space_saved,
 	duration_ms, bitrate, width, height, frame_rate, video_codec, profile, bit_depth,
 	is_hdr, color_transfer, transcode_secs, phase, vmaf_score, selected_crf, quality_mod,
-	skip_reason, smartshrink_quality, created_at, started_at, completed_at
+	skip_reason, smartshrink_quality, output_format, created_at, started_at, completed_at
 ) VALUES (
 	:id, :input_path, :output_path, :temp_path, :preset_id, :encoder, :is_hardware,
 	:status, :progress, :speed, :eta, :error, :input_size, :output_size, :space_saved,
 	:duration_ms, :bitrate, :width, :height, :frame_rate, :video_codec, :profile, :bit_depth,
 	:is_hdr, :color_transfer, :transcode_secs, :phase, :vmaf_score, :selected_crf, :quality_mod,
-	:skip_reason, :smartshrink_quality, :created_at, :started_at, :completed_at
+	:skip_reason, :smartshrink_quality, :output_format, :created_at, :started_at, :completed_at
 )
 ON CONFLICT(id) DO UPDATE SET
 	input_path          = excluded.input_path,
@@ -267,6 +271,7 @@ ON CONFLICT(id) DO UPDATE SET
 	quality_mod         = excluded.quality_mod,
 	skip_reason         = excluded.skip_reason,
 	smartshrink_quality = excluded.smartshrink_quality,
+	output_format       = excluded.output_format,
 	created_at          = excluded.created_at,
 	started_at          = excluded.started_at,
 	completed_at        = excluded.completed_at`
@@ -414,6 +419,14 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 			if err != nil {
 				db.Close()
 				return nil, fmt.Errorf("migration v6->v7 failed: %w", err)
+			}
+		}
+		if version < 8 {
+			// Migrate v7 -> v8: Add output_format for per-job format override
+			_, err = db.Exec(`ALTER TABLE jobs ADD COLUMN output_format TEXT DEFAULT ''`)
+			if err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migration v7->v8 failed: %w", err)
 			}
 		}
 		// Update version
