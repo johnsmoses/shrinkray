@@ -125,8 +125,8 @@ func TestPresetsEndpoint(t *testing.T) {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 
-	if len(presets) != 4 {
-		t.Errorf("expected 4 presets, got %d", len(presets))
+	if len(presets) != 5 {
+		t.Errorf("expected 5 presets, got %d", len(presets))
 	}
 
 	t.Logf("Presets: %v", presets)

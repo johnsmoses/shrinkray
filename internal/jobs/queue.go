@@ -717,6 +717,12 @@ func generateID() string {
 // checkSkipReason returns a skip reason if the file should be skipped, empty string otherwise.
 // Uses BasePresetMeta to decouple skip logic from full preset availability (e.g., VMAF).
 func checkSkipReason(probe *ffmpeg.ProbeResult, meta *ffmpeg.BasePresetMeta, allowSameCodec bool) string {
+	// Remux presets: format-match skip requires runtime config (output_format),
+	// so that check is deferred to the worker's buildRemuxOpts.
+	if meta.IsRemux {
+		return ""
+	}
+
 	// For downscale presets, only check resolution (codec doesn't matter)
 	if meta.MaxHeight > 0 {
 		// Only skip if we have valid height info and it's already small enough

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -582,7 +584,7 @@ func (w *Worker) processJob(job *Job) {
 	result, transcodeErr := w.executeTranscode(jobCtx, job, opts, tempPath)
 
 	// Phase 4: Handle result (cancellation, failure, size check, file move, completion)
-	w.finalizeJob(jobCtx, job, result, transcodeErr, tempPath, startTime)
+	w.finalizeJob(jobCtx, job, preset, result, transcodeErr, tempPath, startTime)
 }
 
 // prepareJob validates the preset, builds the temp output path, and marks the job as started.
@@ -611,12 +613,72 @@ func (w *Worker) prepareJob(job *Job) (*ffmpeg.Preset, string, error) {
 	return preset, tempPath, nil
 }
 
+// buildRemuxOpts constructs TranscodeOptions for a remux (container change) job.
+// Remux copies all streams without re-encoding: no quality settings, no hardware acceleration.
+// Returns an error (and updates job status) if the file is already in the target format.
+func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg.Preset) (ffmpeg.TranscodeOptions, error) {
+	var zero ffmpeg.TranscodeOptions
+
+	// Skip if file is already in the target container format.
+	// e.g., remuxing video.mkv to mkv is a no-op.
+	srcExt := strings.ToLower(filepath.Ext(job.InputPath))
+	targetExt := "." + w.cfg.OutputFormat
+	if srcExt == targetExt {
+		reason := fmt.Sprintf("File is already in %s container", strings.ToUpper(w.cfg.OutputFormat))
+		logger.Info("Job skipped - already in target format",
+			"job_id", job.ID,
+			"format", w.cfg.OutputFormat)
+		if err := w.queue.SkipJob(job.ID, reason); err != nil {
+			logger.Warn("Failed to update job state", "job_id", job.ID, "op", "SkipJob", "error", err)
+		}
+		return zero, fmt.Errorf("job skipped")
+	}
+
+	duration := time.Duration(job.Duration) * time.Millisecond
+	totalFrames := int64(float64(job.Duration) / 1000.0 * job.FrameRate)
+
+	// For MKV output, filter incompatible subtitle codecs to avoid muxing failures.
+	var subtitleIndices []int
+	if w.cfg.OutputFormat == "mkv" {
+		probeCtx, probeCancel := context.WithTimeout(jobCtx, 10*time.Second)
+		subtitleStreams, err := w.prober.ProbeSubtitles(probeCtx, job.InputPath)
+		probeCancel()
+
+		if err != nil {
+			logger.Warn("Failed to probe subtitles, using default mapping",
+				"job_id", job.ID, "error", err)
+		} else if len(subtitleStreams) > 0 {
+			compatible, dropped := ffmpeg.FilterMKVCompatible(subtitleStreams)
+			if len(dropped) > 0 {
+				logger.Warn("Dropping incompatible subtitle streams",
+					"job_id", job.ID,
+					"dropped", dropped,
+					"reason", "not supported in MKV container")
+			}
+			subtitleIndices = compatible
+		}
+	}
+
+	return ffmpeg.TranscodeOptions{
+		Preset:          preset,
+		Duration:        duration,
+		TotalFrames:     totalFrames,
+		OutputFormat:    w.cfg.OutputFormat,
+		SubtitleIndices: subtitleIndices,
+	}, nil
+}
+
 // buildTranscodeOpts resolves quality settings (including SmartShrink analysis if applicable),
 // detects hardware/software decode requirements, sets up HDR tonemapping, filters subtitles,
 // and constructs the TranscodeOptions struct. On error, the job status is already updated
 // (SmartShrink skip/cancel/fail) and the caller should return without further action.
 func (w *Worker) buildTranscodeOpts(jobCtx context.Context, job *Job, preset *ffmpeg.Preset) (ffmpeg.TranscodeOptions, error) {
 	var zero ffmpeg.TranscodeOptions
+
+	// Remux presets copy all streams - no encoding, no quality settings, no hardware acceleration
+	if preset.IsRemux {
+		return w.buildRemuxOpts(jobCtx, job, preset)
+	}
 
 	// Initialize quality settings (may be overridden by SmartShrink analysis)
 	qualityHEVC := w.cfg.QualityHEVC
@@ -812,6 +874,7 @@ func (w *Worker) executeTranscode(
 func (w *Worker) finalizeJob(
 	jobCtx context.Context,
 	job *Job,
+	preset *ffmpeg.Preset,
 	result *ffmpeg.TranscodeResult,
 	transcodeErr error,
 	tempPath string,
@@ -845,8 +908,10 @@ func (w *Worker) finalizeJob(
 		return
 	}
 
-	// Check if transcoded file is larger than original
-	if result.OutputSize >= job.InputSize && !w.cfg.KeepLargerFiles {
+	// Check if transcoded file is larger than original.
+	// Remux is exempt: it's a container change, not a compression operation.
+	// Container overhead can cause the output to be marginally larger than the source.
+	if preset != nil && !preset.IsRemux && result.OutputSize >= job.InputSize && !w.cfg.KeepLargerFiles {
 		// Delete the temp file and skip the job (not fail, this is expected behavior)
 		if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
 			logger.Warn("Failed to remove temp file", "path", tempPath, "error", err)
@@ -857,7 +922,7 @@ func (w *Worker) finalizeJob(
 			logger.Warn("Failed to update job state", "job_id", job.ID, "op", "SkipJob", "error", err)
 		}
 		return
-	} else if result.OutputSize >= job.InputSize {
+	} else if preset != nil && !preset.IsRemux && result.OutputSize >= job.InputSize {
 		logger.Warn("Output larger than input but keeping (keep_larger_files enabled)", "job_id", job.ID, "input_size", util.FormatBytes(job.InputSize), "output_size", util.FormatBytes(result.OutputSize))
 	}
 

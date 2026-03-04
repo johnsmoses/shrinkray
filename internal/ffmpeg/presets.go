@@ -17,6 +17,7 @@ type Preset struct {
 	Codec         Codec   `json:"codec"`           // Target codec (HEVC or AV1)
 	MaxHeight     int     `json:"max_height"`      // 0 = no scaling, 1080, 720, etc.
 	IsSmartShrink bool    `json:"is_smart_shrink"` // True for VMAF-based presets
+	IsRemux       bool    `json:"is_remux"`        // True for container-change presets (no re-encoding)
 }
 
 // WithEncoder returns a copy of the preset with a different encoder.
@@ -240,14 +241,17 @@ var BasePresets = []struct {
 	Codec         Codec
 	MaxHeight     int
 	IsSmartShrink bool
+	IsRemux       bool
 }{
-	{"compress-hevc", "Compress (HEVC)", "Reduce size with HEVC encoding", CodecHEVC, 0, false},
-	{"compress-av1", "Compress (AV1)", "Maximum compression with AV1 encoding", CodecAV1, 0, false},
-	{"1080p", "Downscale to 1080p", "Downscale to 1080p max (HEVC)", CodecHEVC, 1080, false},
-	{"720p", "Downscale to 720p", "Downscale to 720p (big savings)", CodecHEVC, 720, false},
+	{"compress-hevc", "Compress (HEVC)", "Reduce size with HEVC encoding", CodecHEVC, 0, false, false},
+	{"compress-av1", "Compress (AV1)", "Maximum compression with AV1 encoding", CodecAV1, 0, false, false},
+	{"1080p", "Downscale to 1080p", "Downscale to 1080p max (HEVC)", CodecHEVC, 1080, false, false},
+	{"720p", "Downscale to 720p", "Downscale to 720p (big savings)", CodecHEVC, 720, false, false},
 	// SmartShrink presets - VMAF-based auto-optimization
-	{"smartshrink-hevc", "SmartShrink (HEVC)", "Auto-optimize with VMAF analysis", CodecHEVC, 0, true},
-	{"smartshrink-av1", "SmartShrink (AV1)", "Auto-optimize with VMAF analysis", CodecAV1, 0, true},
+	{"smartshrink-hevc", "SmartShrink (HEVC)", "Auto-optimize with VMAF analysis", CodecHEVC, 0, true, false},
+	{"smartshrink-av1", "SmartShrink (AV1)", "Auto-optimize with VMAF analysis", CodecAV1, 0, true, false},
+	// Remux preset - container change without re-encoding
+	{"remux", "Remux", "Change container without re-encoding (lossless)", "", 0, false, true},
 }
 
 // BasePresetMeta provides minimal preset metadata for skip checks.
@@ -255,6 +259,7 @@ var BasePresets = []struct {
 type BasePresetMeta struct {
 	Codec     Codec
 	MaxHeight int
+	IsRemux   bool // True for container-change presets
 }
 
 // Meta returns the base metadata for this preset.
@@ -266,6 +271,7 @@ func (p *Preset) Meta() *BasePresetMeta {
 	return &BasePresetMeta{
 		Codec:     p.Codec,
 		MaxHeight: p.MaxHeight,
+		IsRemux:   p.IsRemux,
 	}
 }
 
@@ -277,6 +283,7 @@ func GetBasePresetMeta(id string) *BasePresetMeta {
 			return &BasePresetMeta{
 				Codec:     base.Codec,
 				MaxHeight: base.MaxHeight,
+				IsRemux:   base.IsRemux,
 			}
 		}
 	}
@@ -428,6 +435,45 @@ type TonemapParams struct {
 	IsHDR          bool   // True if source is HDR content
 	EnableTonemap  bool   // True if tonemapping should be applied
 	Algorithm      string // Tonemapping algorithm: hable, bt2390, reinhard, etc.
+}
+
+// BuildRemuxArgs builds FFmpeg arguments for a remux (container change) operation.
+// Copies all streams without re-encoding: video, audio, and subtitles.
+// Returns (inputArgs, outputArgs): inputArgs go before -i, outputArgs go after.
+func BuildRemuxArgs(outputFormat string, subtitleIndices []int) (inputArgs []string, outputArgs []string) {
+	// No hardware acceleration for remux (all streams are copied)
+	inputArgs = nil
+
+	outputArgs = []string{
+		"-map", "0:v:0", // First video stream only (skip attached pictures/cover art)
+		"-map", "0:a?",  // All audio streams (optional)
+		"-c", "copy",    // Copy all streams without re-encoding
+	}
+
+	if outputFormat == "mp4" {
+		// MP4: skip subtitles (most subtitle codecs are incompatible with MP4 container)
+		// and add faststart for web/streaming compatibility.
+		outputArgs = append(outputArgs,
+			"-sn",
+			"-movflags", "+faststart",
+		)
+	} else {
+		// MKV: include subtitles based on SubtitleIndices compatibility check.
+		switch {
+		case subtitleIndices == nil:
+			// nil = map all subtitle streams (default behavior)
+			outputArgs = append(outputArgs, "-map", "0:s?")
+		case len(subtitleIndices) == 0:
+			// empty = no compatible subtitles found, don't add any
+		default:
+			// specific indices = map only compatible streams
+			for _, idx := range subtitleIndices {
+				outputArgs = append(outputArgs, "-map", fmt.Sprintf("0:%d?", idx))
+			}
+		}
+	}
+
+	return inputArgs, outputArgs
 }
 
 // BuildPresetArgs builds FFmpeg arguments from encoding options.
@@ -597,6 +643,11 @@ func BuildPresetArgs(opts TranscodeOptions) (inputArgs []string, outputArgs []st
 		)
 	}
 
+	// Prevent "Too many packets buffered for output stream" errors during muxing.
+	// Raised from FFmpeg's default of 128 to handle streams with large interleave gaps,
+	// common when audio packets arrive far ahead of video (e.g., some MKV sources).
+	outputArgs = append(outputArgs, "-max_muxing_queue_size", "4096")
+
 	// Add stream mapping and handle audio/subtitles based on output format
 	// Use explicit stream selection to skip attached pictures (cover art)
 	// that cause hardware encoders to fail (issue #40)
@@ -735,6 +786,18 @@ func GeneratePresets() map[string]*Preset {
 			continue
 		}
 
+		// Remux preset: copies all streams, no encoder selection needed
+		if base.IsRemux {
+			presets[base.ID] = &Preset{
+				ID:          base.ID,
+				Name:        base.Name,
+				Description: base.Description,
+				Encoder:     HWAccelNone,
+				IsRemux:     true,
+			}
+			continue
+		}
+
 		// Get the best available encoder for this preset's target codec
 		bestEncoder := GetBestEncoderForCodec(base.Codec)
 
@@ -786,6 +849,16 @@ func getSoftwarePreset(id string) *Preset {
 			if base.IsSmartShrink && !vmaf.IsAvailable() {
 				return nil
 			}
+			// Remux preset: no encoder needed, no [SW] suffix
+			if base.IsRemux {
+				return &Preset{
+					ID:          base.ID,
+					Name:        base.Name,
+					Description: base.Description,
+					Encoder:     HWAccelNone,
+					IsRemux:     true,
+				}
+			}
 			return &Preset{
 				ID:            base.ID,
 				Name:          base.Name + " [SW]",
@@ -819,6 +892,17 @@ func ListPresets() []*Preset {
 		for _, base := range BasePresets {
 			// Skip SmartShrink presets if VMAF not available
 			if base.IsSmartShrink && !vmaf.IsAvailable() {
+				continue
+			}
+			// Remux preset: no encoder, no [SW] suffix
+			if base.IsRemux {
+				presets = append(presets, &Preset{
+					ID:          base.ID,
+					Name:        base.Name,
+					Description: base.Description,
+					Encoder:     HWAccelNone,
+					IsRemux:     true,
+				})
 				continue
 			}
 			presets = append(presets, &Preset{

@@ -113,9 +113,14 @@ func (t *Transcoder) Transcode(
 	}
 	inputSize := inputInfo.Size()
 
-	// Build preset args with source bitrate for dynamic calculation
+	// Build preset args: remux uses copy (no encoding), others use full encoder pipeline
 	// inputArgs go before -i (hwaccel), outputArgs go after
-	inputArgs, outputArgs := BuildPresetArgs(opts)
+	var inputArgs, outputArgs []string
+	if opts.Preset.IsRemux {
+		inputArgs, outputArgs = BuildRemuxArgs(opts.OutputFormat, opts.SubtitleIndices)
+	} else {
+		inputArgs, outputArgs = BuildPresetArgs(opts)
+	}
 
 	// Check if hardware decode is actually being used (presence of -hwaccel flag).
 	// This determines whether we need the first-frame watchdog to catch HW decode hangs.
