@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Shrinkray</Name>
+  <Repository>ghcr.io/johnsmoses/shrinkray:latest</Repository>
+  <Registry>https://github.com/johnsmoses/shrinkray/pkgs/container/shrinkray</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/johnsmoses/shrinkray/issues</Support>
+  <Project>https://github.com/johnsmoses/shrinkray</Project>
+  <Overview>A simple video transcoding tool for Unraid. Select a folder, pick a preset, and shrink your media library with hardware-accelerated HEVC/AV1 encoding.&#13;
+&#13;
+Presets include: Compress (HEVC/AV1), Downscale to 1080p/720p, SmartShrink (VMAF-guided auto quality), and Remux (lossless container change, e.g. MKV to MP4).&#13;
+&#13;
+GPU Setup (Recommended):&#13;
+Without GPU passthrough, Shrinkray falls back to slower CPU encoding.&#13;
+&#13;
+Intel/AMD: Add --device=/dev/dri to Extra Parameters.&#13;
+&#13;
+NVIDIA: Install the Nvidia-Driver plugin (reboot after) and add --runtime=nvidia to Extra Parameters.&#13;
+&#13;
+Temp Path (Optional): Map a fast cache drive to /temp and set temp_path: /temp in /config/shrinkray.yaml for faster transcoding.</Overview>
+  <Category>MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:8080]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/johnsmoses/shrinkray/develop/unraid/shrinkray.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/johnsmoses/shrinkray/develop/web/templates/logo.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>For hardware acceleration, GPU passthrough is required. See Overview for setup instructions.</Requires>
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/Shrinkray" Mode="rw" Description="Configuration directory. Stores shrinkray.yaml and the job database." Type="Path" Display="always-hide" Required="true" Mask="false">/mnt/user/appdata/Shrinkray</Config>
+  <Config Name="Media" Target="/media" Default="/mnt/user/Media" Mode="rw" Description="Root of your media library to browse and transcode." Type="Path" Display="always-hide" Required="true" Mask="false">/mnt/user/Media</Config>
+  <Config Name="Temp" Target="/temp" Default="" Mode="rw" Description="(Optional) Fast storage for temp files during transcoding. Set temp_path: /temp in shrinkray.yaml to use it." Type="Path" Display="always" Required="false" Mask="false"/>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions (default 99 = nobody)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions (default 100 = users)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="NVIDIA_VISIBLE_DEVICES" Target="NVIDIA_VISIBLE_DEVICES" Default="all" Mode="" Description="NVIDIA GPU(s) to expose. Use 'all' for single-GPU systems. For multi-GPU, set a specific GPU UUID from the Nvidia-Driver plugin page. Requires --runtime=nvidia in Extra Parameters." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
+  <Config Name="NVIDIA_DRIVER_CAPABILITIES" Target="NVIDIA_DRIVER_CAPABILITIES" Default="all" Mode="" Description="NVIDIA driver features exposed to the container. 'all' enables compute, video, and graphics." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
+  <TailscaleStateDir/>
+</Container>
