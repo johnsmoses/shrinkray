@@ -65,6 +65,11 @@ type Config struct {
 	// MKV preserves all streams; MP4 transcodes audio to AAC and strips subtitles
 	OutputFormat string `yaml:"output_format"`
 
+	// UseHVC1Tag adds -tag:v hvc1 when remuxing HEVC video to MP4 containers.
+	// Required for hardware-accelerated HEVC playback on Apple devices (iOS, macOS, tvOS).
+	// FFmpeg defaults to the hev1 tag; hvc1 is the Apple-compatible variant.
+	UseHVC1Tag bool `yaml:"use_hvc1_tag"`
+
 	// TonemapHDR enables automatic HDR to SDR conversion (default: false)
 	// When enabled, HDR content (HDR10, HLG) is tonemapped to SDR using CPU.
 	// When disabled, HDR metadata is preserved for HDR-capable displays.

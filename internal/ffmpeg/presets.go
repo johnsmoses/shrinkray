@@ -438,13 +438,25 @@ type TonemapParams struct {
 }
 
 // BuildRemuxArgs builds FFmpeg arguments for a remux (container change) operation.
-// Copies all streams without re-encoding. Subtitle handling differs by container:
-//   - MKV: copy compatible subtitle streams (subtitleCopyIndices)
-//   - MP4: transcode text-based subtitles to mov_text (subtitleTranscodeIndices),
+// Copies all streams without re-encoding. Container-specific handling:
+//
+// Audio (MP4 only):
+//   - Compatible codecs (AAC, MP3, AC-3, EAC-3, ALAC): stream-copied
+//   - When opts.TranscodeAudioToAAC is true: all audio transcoded to AAC
+//     (used when any audio stream is incompatible with MP4, e.g. DTS, TrueHD)
+//
+// Video tag (MP4 + HEVC only):
+//   - When opts.UseHVC1Tag is true: adds -tag:v hvc1 for Apple device compatibility
+//     (FFmpeg defaults to hev1; Apple requires hvc1 for HEVC playback)
+//
+// Subtitles:
+//   - MKV: copy compatible streams (opts.SubtitleIndices)
+//   - MP4: transcode text-based subtitles to mov_text (opts.SubtitleTranscodeIndices),
 //     drop image-based subtitles (PGS, VobSub) that cannot be represented as timed text
 //
 // Returns (inputArgs, outputArgs): inputArgs go before -i, outputArgs go after.
-func BuildRemuxArgs(outputFormat string, subtitleCopyIndices []int, subtitleTranscodeIndices []int) (inputArgs []string, outputArgs []string) {
+func BuildRemuxArgs(opts TranscodeOptions) (inputArgs []string, outputArgs []string) { //nolint:gocritic // by value: callers rely on safe copy semantics
+	outputFormat := opts.OutputFormat
 	// No hardware acceleration for remux (all streams are copied)
 	inputArgs = nil
 
@@ -454,11 +466,23 @@ func BuildRemuxArgs(outputFormat string, subtitleCopyIndices []int, subtitleTran
 		"-c", "copy",    // Copy all streams without re-encoding
 	}
 
+	// Transcode incompatible audio to AAC for MP4 compatibility.
+	// DTS, TrueHD, PCM etc. cannot be stream-copied to MP4; this overrides -c copy for audio.
+	if opts.TranscodeAudioToAAC {
+		outputArgs = append(outputArgs, "-c:a", "aac")
+	}
+
+	// Add hvc1 codec tag for HEVC streams in MP4 containers.
+	// FFmpeg defaults to hev1; Apple devices require hvc1 for hardware-accelerated HEVC playback.
+	if opts.UseHVC1Tag && outputFormat == "mp4" {
+		outputArgs = append(outputArgs, "-tag:v", "hvc1")
+	}
+
 	if outputFormat == "mp4" {
 		// MP4: transcode text-based subtitles to mov_text; drop image-based ones.
 		// mov_text is the only subtitle format natively supported by the MP4 container.
-		if len(subtitleTranscodeIndices) > 0 {
-			for _, idx := range subtitleTranscodeIndices {
+		if len(opts.SubtitleTranscodeIndices) > 0 {
+			for _, idx := range opts.SubtitleTranscodeIndices {
 				outputArgs = append(outputArgs, "-map", fmt.Sprintf("0:%d?", idx))
 			}
 			outputArgs = append(outputArgs, "-c:s", "mov_text")
@@ -470,14 +494,14 @@ func BuildRemuxArgs(outputFormat string, subtitleCopyIndices []int, subtitleTran
 	} else {
 		// MKV: copy subtitles based on compatibility check.
 		switch {
-		case subtitleCopyIndices == nil:
+		case opts.SubtitleIndices == nil:
 			// nil = map all subtitle streams (default when probe unavailable)
 			outputArgs = append(outputArgs, "-map", "0:s?")
-		case len(subtitleCopyIndices) == 0:
+		case len(opts.SubtitleIndices) == 0:
 			// empty = no compatible subtitles, don't add any
 		default:
 			// specific indices = map only compatible streams
-			for _, idx := range subtitleCopyIndices {
+			for _, idx := range opts.SubtitleIndices {
 				outputArgs = append(outputArgs, "-map", fmt.Sprintf("0:%d?", idx))
 			}
 		}

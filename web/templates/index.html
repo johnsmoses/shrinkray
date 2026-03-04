@@ -689,6 +689,11 @@
             color: var(--warning);
         }
 
+        .codec-badge.audio {
+            background: var(--bg-tertiary);
+            color: var(--text-tertiary);
+        }
+
         .file-list-empty {
             padding: 60px 20px;
             text-align: center;
@@ -2350,7 +2355,7 @@
                         <div class="setting-item">
                             <div class="setting-info">
                                 <div class="setting-name">Output Container</div>
-                                <div class="setting-desc">MP4 converts audio to AAC stereo and strips subtitles</div>
+                                <div class="setting-desc">MP4 transcodes incompatible audio to AAC and text subtitles to mov_text when remuxing</div>
                             </div>
                             <div class="setting-control">
                                 <select class="setting-select" id="setting-output-format"
@@ -2358,6 +2363,19 @@
                                     <option value="mkv">MKV (preserves all streams)</option>
                                     <option value="mp4">MP4 (web compatible)</option>
                                 </select>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <div class="setting-name">HEVC Tag (Apple Compatibility)</div>
+                                <div class="setting-desc">When remuxing HEVC to MP4, tag video as hvc1 instead of hev1. Required for HEVC playback on Apple devices (iOS, Apple TV, macOS).</div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle">
+                                    <input type="checkbox" id="setting-use-hvc1-tag"
+                                           onchange="updateSetting('use_hvc1_tag', this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
                             </div>
                         </div>
                         <div class="setting-item">
@@ -2522,7 +2540,8 @@
                 codecClass = 'av1';
             }
             const hdrBadge = vi.is_hdr ? '<span class="codec-badge hdr">HDR</span>' : '';
-            return `<span class="codec-badge ${codecClass}">${vi.video_codec}</span>${hdrBadge}<span>${vi.width}x${vi.height}</span>`;
+            const audioBadge = vi.audio_codec ? `<span class="codec-badge audio">${vi.audio_codec}</span>` : '';
+            return `<span class="codec-badge ${codecClass}">${vi.video_codec}</span>${hdrBadge}${audioBadge}<span>${vi.width}x${vi.height}</span>`;
         }
 
         function renderBrowseEntries(entries) {
@@ -4052,6 +4071,9 @@
 
                 // Output format
                 document.getElementById('setting-output-format').value = config.output_format || 'mkv';
+
+                // hvc1 tag for HEVC MP4 remux (Apple compatibility)
+                document.getElementById('setting-use-hvc1-tag').checked = config.use_hvc1_tag === true;
 
                 // Log level
                 document.getElementById('setting-log-level').value = config.log_level || 'info';

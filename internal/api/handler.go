@@ -405,6 +405,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		"log_level":               h.cfg.LogLevel,
 		"allow_same_codec":        h.cfg.AllowSameCodec,
 		"keep_larger_files":       h.cfg.KeepLargerFiles,
+		"use_hvc1_tag":            h.cfg.UseHVC1Tag,
 	})
 }
 
@@ -427,6 +428,7 @@ type UpdateConfigRequest struct {
 	LogLevel              *string `json:"log_level,omitempty"`
 	AllowSameCodec        *bool   `json:"allow_same_codec,omitempty"`
 	KeepLargerFiles       *bool   `json:"keep_larger_files,omitempty"`
+	UseHVC1Tag            *bool   `json:"use_hvc1_tag,omitempty"`
 }
 
 // UpdateConfig handles PUT /api/config
@@ -541,6 +543,10 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 	if req.KeepLargerFiles != nil {
 		h.cfg.KeepLargerFiles = *req.KeepLargerFiles
+	}
+
+	if req.UseHVC1Tag != nil {
+		h.cfg.UseHVC1Tag = *req.UseHVC1Tag
 	}
 
 	// Handle log level

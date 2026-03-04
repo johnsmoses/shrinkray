@@ -212,6 +212,47 @@ func (p *Prober) ProbeSubtitles(ctx context.Context, path string) ([]SubtitleStr
 	return subtitles, nil
 }
 
+// AudioStream contains metadata about an audio stream.
+// Index is the absolute stream index (used with -map 0:N), not audio-relative.
+type AudioStream struct {
+	Index     int    // Absolute stream index in the file (for -map 0:N)
+	CodecName string // e.g., "aac", "dts", "truehd", "pcm_s24le"
+}
+
+// ProbeAudio returns audio stream info for a file.
+// Returns nil slice if no audio streams exist.
+func (p *Prober) ProbeAudio(ctx context.Context, path string) ([]AudioStream, error) {
+	cmd := exec.CommandContext(ctx, p.ffprobePath,
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-select_streams", "a", // Only audio streams
+		path,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("ffprobe failed: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var probeOutput ffprobeOutput
+	if err := json.Unmarshal(output, &probeOutput); err != nil {
+		return nil, fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	var audio []AudioStream
+	for i := range probeOutput.Streams {
+		audio = append(audio, AudioStream{
+			Index:     probeOutput.Streams[i].Index,
+			CodecName: probeOutput.Streams[i].CodecName,
+		})
+	}
+	return audio, nil
+}
+
 // detectHDR determines if video is HDR based on color metadata.
 // Primary detection: smpte2084 (PQ) transfer = HDR10
 // Fallback heuristic: 10-bit + bt2020 primaries = likely HDR

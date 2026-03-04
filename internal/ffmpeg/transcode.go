@@ -73,6 +73,8 @@ type TranscodeOptions struct {
 	Tonemap                  *TonemapParams
 	SubtitleIndices          []int // MKV: subtitle streams to copy; remux to MP4: unused
 	SubtitleTranscodeIndices []int // MP4 remux: text-based subtitle streams to transcode to mov_text
+	TranscodeAudioToAAC      bool  // MP4 remux: transcode incompatible audio (DTS, TrueHD, etc.) to AAC
+	UseHVC1Tag               bool  // HEVC+MP4 remux: add -tag:v hvc1 for Apple device compatibility
 }
 
 // Transcoder wraps ffmpeg transcoding functionality
@@ -118,7 +120,7 @@ func (t *Transcoder) Transcode(
 	// inputArgs go before -i (hwaccel), outputArgs go after
 	var inputArgs, outputArgs []string
 	if opts.Preset.IsRemux {
-		inputArgs, outputArgs = BuildRemuxArgs(opts.OutputFormat, opts.SubtitleIndices, opts.SubtitleTranscodeIndices)
+		inputArgs, outputArgs = BuildRemuxArgs(opts)
 	} else {
 		inputArgs, outputArgs = BuildPresetArgs(opts)
 	}

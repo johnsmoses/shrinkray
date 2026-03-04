@@ -641,6 +641,8 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 
 	var subtitleIndices []int
 	var subtitleTranscodeIndices []int
+	var transcodeAudioToAAC bool
+	var useHVC1Tag bool
 
 	if outputFormat == "mkv" {
 		// For MKV output, filter incompatible subtitle codecs to avoid muxing failures.
@@ -679,6 +681,27 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 			}
 			subtitleTranscodeIndices = transcodable
 		}
+
+		// Probe audio streams to detect codecs incompatible with MP4 (DTS, TrueHD, PCM, etc.).
+		// These cannot be stream-copied to MP4 and would be silently dropped by the muxer.
+		audioCtx, audioCancel := context.WithTimeout(jobCtx, 10*time.Second)
+		audioStreams, audioErr := w.prober.ProbeAudio(audioCtx, job.InputPath)
+		audioCancel()
+		if audioErr != nil {
+			logger.Warn("Failed to probe audio streams, using stream copy",
+				"job_id", job.ID, "error", audioErr)
+		} else if incompatible := ffmpeg.IncompatibleMP4AudioCodecs(audioStreams); len(incompatible) > 0 {
+			transcodeAudioToAAC = true
+			logger.Info("Transcoding incompatible audio to AAC for MP4 output",
+				"job_id", job.ID,
+				"incompatible_codecs", incompatible)
+		}
+
+		// Apply hvc1 codec tag for HEVC sources (Apple device compatibility).
+		// FFmpeg defaults to hev1; Apple requires hvc1 for hardware-accelerated HEVC playback.
+		srcCodec := strings.ToLower(job.VideoCodec)
+		isHEVC := srcCodec == "hevc" || srcCodec == "h265" || srcCodec == "x265"
+		useHVC1Tag = w.cfg.UseHVC1Tag && isHEVC
 	}
 
 	return ffmpeg.TranscodeOptions{
@@ -688,6 +711,8 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 		OutputFormat:             outputFormat,
 		SubtitleIndices:          subtitleIndices,
 		SubtitleTranscodeIndices: subtitleTranscodeIndices,
+		TranscodeAudioToAAC:      transcodeAudioToAAC,
+		UseHVC1Tag:               useHVC1Tag,
 	}, nil
 }
 
