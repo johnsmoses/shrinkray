@@ -621,11 +621,16 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 
 	outputFormat := w.resolveOutputFormat(job)
 
-	// Skip if file is already in the target container format.
-	// e.g., remuxing video.mkv to mkv is a no-op.
+	// Detect source codec early so the skip check can account for tag-only operations.
+	srcCodecLower := strings.ToLower(job.VideoCodec)
+	isHEVC := srcCodecLower == "hevc" || srcCodecLower == "h265" || srcCodecLower == "x265"
+
+	// Skip if file is already in the target container format AND no tag change is needed.
+	// Exception: MP4→MP4 with UseHVC1Tag + HEVC source is a valid hev1→hvc1 retag operation.
 	srcExt := strings.ToLower(filepath.Ext(job.InputPath))
 	targetExt := "." + outputFormat
-	if srcExt == targetExt {
+	wouldRetag := w.cfg.UseHVC1Tag && isHEVC && outputFormat == "mp4"
+	if srcExt == targetExt && !wouldRetag {
 		reason := fmt.Sprintf("File is already in %s container", strings.ToUpper(outputFormat))
 		logger.Info("Job skipped - already in target format",
 			"job_id", job.ID,
@@ -699,8 +704,6 @@ func (w *Worker) buildRemuxOpts(jobCtx context.Context, job *Job, preset *ffmpeg
 
 		// Apply hvc1 codec tag for HEVC sources (Apple device compatibility).
 		// FFmpeg defaults to hev1; Apple requires hvc1 for hardware-accelerated HEVC playback.
-		srcCodec := strings.ToLower(job.VideoCodec)
-		isHEVC := srcCodec == "hevc" || srcCodec == "h265" || srcCodec == "x265"
 		useHVC1Tag = w.cfg.UseHVC1Tag && isHEVC
 	}
 
