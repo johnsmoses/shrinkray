@@ -962,9 +962,15 @@ func (w *Worker) finalizeJob(
 	}
 
 	// Check if transcoded file is larger than original.
-	// Remux is exempt: it's a container change, not a compression operation.
-	// Container overhead can cause the output to be marginally larger than the source.
-	if preset != nil && !preset.IsRemux && result.OutputSize >= job.InputSize && !w.cfg.KeepLargerFiles {
+	// Exempt when: it's a remux, OR the container format changed (MKV→MP4 etc.).
+	// Comparing sizes across different containers is not meaningful: container overhead,
+	// audio transcoding, and subtitle handling all affect output size independently of
+	// video compression quality.
+	outputFmt := w.resolveOutputFormat(job)
+	srcExt := strings.ToLower(filepath.Ext(job.InputPath))
+	formatChanged := srcExt != "."+outputFmt
+	sizeCheckApplies := preset != nil && !preset.IsRemux && !formatChanged
+	if sizeCheckApplies && result.OutputSize >= job.InputSize && !w.cfg.KeepLargerFiles {
 		// Delete the temp file and skip the job (not fail, this is expected behavior)
 		if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
 			logger.Warn("Failed to remove temp file", "path", tempPath, "error", err)
@@ -975,7 +981,7 @@ func (w *Worker) finalizeJob(
 			logger.Warn("Failed to update job state", "job_id", job.ID, "op", "SkipJob", "error", err)
 		}
 		return
-	} else if preset != nil && !preset.IsRemux && result.OutputSize >= job.InputSize {
+	} else if sizeCheckApplies && result.OutputSize >= job.InputSize {
 		logger.Warn("Output larger than input but keeping (keep_larger_files enabled)", "job_id", job.ID, "input_size", util.FormatBytes(job.InputSize), "output_size", util.FormatBytes(result.OutputSize))
 	}
 
